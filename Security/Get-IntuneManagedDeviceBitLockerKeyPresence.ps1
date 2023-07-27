@@ -45,7 +45,12 @@ param(
     [parameter(Mandatory = $false, HelpMessage = "Specify either 'Present' or 'NotPresent'.")]
     [ValidateNotNullOrEmpty()]
     [ValidateSet("NotPresent", "Present")]
-    [string]$State = "Present"
+    [string]$State = "Present",
+
+    [parameter(Mandatory = $false, HelpMessage = "Specify either 'Encrypted', 'NotEncrypted' or 'All'")]
+    [ValidateNotNullOrEmpty()]
+    [ValidateSet("Encrypted", "NotEncrypted", "All")]
+    [string]$encryptionstate = "All"
 )
 Begin {}
 Process {
@@ -332,19 +337,64 @@ Process {
         $AuthenticationHeader = New-AuthenticationHeader -AccessToken $AccessToken
         
         # Retrieve all available BitLocker recovery keys, select only desired properties
-        $BitLockerRecoveryKeys = Invoke-MSGraphOperation -Get -APIVersion "Beta" -Resource "bitlocker/recoveryKeys?`$select=id,createdDateTime,deviceId" -Headers $AuthenticationHeader -Verbose:$VerbosePreference
+        $BitLockerRecoveryKeys = Invoke-MSGraphOperation -Get -APIVersion "v1.0" -Resource "informationProtection/bitlocker/recoveryKeys?`$select=id,createdDateTime,deviceId" -Headers $AuthenticationHeader -Verbose:$VerbosePreference
         
         # Retrieve all managed Windows devices in Intune
-        $ManagedDevices = Invoke-MSGraphOperation -Get -APIVersion "v1.0" -Resource "deviceManagement/managedDevices?`$filter=operatingSystem eq 'Windows'&select=azureADDeviceId&`$select=deviceName,id,azureADDeviceId" -Headers $AuthenticationHeader -Verbose:$VerbosePreference
+        $ManagedDevices = Invoke-MSGraphOperation -Get -APIVersion "v1.0" -Resource "deviceManagement/managedDevices?`$filter=operatingSystem eq 'Windows'&select=azureADDeviceId&`$select=deviceName,id,azureADDeviceId,isEncrypted" -Headers $AuthenticationHeader -Verbose:$VerbosePreference
         
         # Define behavior for managed device selection
         switch ($State) {
             "Present" {
-                $ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }
+               $present= $ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }
             }
             "NotPresent" {
-                $ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }
+               $notpresent= $ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }
             }
+        }
+        switch ($encryptionstate) {
+            "Encrypted" {
+                if ($State -eq "Present")
+                {
+                    $present | where {$_.isEncrypted -eq $true}
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }).count) devices with the recovery key in Azure and $(($present | where {$_.isEncrypted -eq $false} | Measure-Object).count) devices are not encrypted"
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) devices missing recovery key, $((($ManagedDevices | where {$_.isEncrypted -eq $true}) | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) of those devices are encrypted"
+                }
+                if ($State -eq "NotPresent")
+                {
+                    $notpresent | where {$_.isEncrypted -eq $true}
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }).count) devices with the recovery key in Azure and $(($present | where {$_.isEncrypted -eq $false} | Measure-Object).count) devices are not encrypted"
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) devices missing recovery key, $((($ManagedDevices | where {$_.isEncrypted -eq $true}) | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) of those devices are encrypted"
+                }
+              }
+              "NotEncrypted" {
+                if ($State -eq "Present")
+                {
+                    $present | where {$_.isEncrypted -eq $false}
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }).count) devices with the recovery key in Azure and $(($present | where {$_.isEncrypted -eq $false} | Measure-Object).count) devices are not encrypted"
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) devices missing recovery key, $((($ManagedDevices | where {$_.isEncrypted -eq $true}) | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) of those devices are encrypted"
+                }
+                if ($State -eq "NotPresent")
+                {
+                    $notpresent | where {$_.isEncrypted -eq $false}
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }).count) devices with the recovery key in Azure and $(($present | where {$_.isEncrypted -eq $false} | Measure-Object).count) devices are not encrypted"
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) devices missing recovery key, $((($ManagedDevices | where {$_.isEncrypted -eq $true}) | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) of those devices are encrypted"
+                }
+              }
+              "All" {
+                if ($State -eq "Present")
+                {
+                    $present
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }).count) devices with the recovery key in Azure and $(($present | where {$_.isEncrypted -eq $false} | Measure-Object).count) devices are not encrypted"
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) devices missing recovery key, $((($ManagedDevices | where {$_.isEncrypted -eq $true}) | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) of those devices are encrypted"
+                }
+                if ($State -eq "NotPresent")
+                {
+                    $notpresent
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -in $BitLockerRecoveryKeys.deviceId }).count) devices with the recovery key in Azure and $(($present | where {$_.isEncrypted -eq $false} | Measure-Object).count) devices are not encrypted"
+                    Write-Host "There is $(($ManagedDevices | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) devices missing recovery key, $((($ManagedDevices | where {$_.isEncrypted -eq $true}) | Where-Object { $PSItem.azureADDeviceId -notin $BitLockerRecoveryKeys.deviceId }).count) of those devices are encrypted"
+                }
+              }
+            Default {"All"}
         }
     }
     catch [System.Exception] {
